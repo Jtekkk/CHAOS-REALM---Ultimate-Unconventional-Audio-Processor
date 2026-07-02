@@ -659,6 +659,89 @@ inline void makeHannWindow (std::vector<float>& w, int size)
         w[(size_t) i] = 0.5f - 0.5f * std::cos (kTwoPiF * (float) i / (float) size);
 }
 
+// ============================================================================
+//  RealFFT — real-input FFT via a half-size complex FFT.
+//
+//  A length-N real signal (N a power of two) has a conjugate-symmetric
+//  spectrum, so only N/2+1 bins are unique.  Computing it with a full N-point
+//  complex FFT wastes ~half the work.  RealFFT instead runs an (N/2)-point
+//  complex FFT and split/recombines, roughly halving the transform cost — the
+//  single biggest CPU lever for the STFT-based Spectral module.
+//
+//  Correctness is asserted by tests/dsp_core_tests.cpp against both a direct
+//  DFT and a full complex FFT.
+// ============================================================================
+class RealFFT
+{
+public:
+    /** order == log2(N), where N is the REAL length.  N must be >= 4. */
+    void prepare (int order)
+    {
+        realOrder = order;
+        N = 1 << order;
+        M = N / 2;                       // internal complex FFT size
+        half.prepare (order - 1);        // (N/2)-point complex FFT
+        buffer.assign ((size_t) M, {0.0f, 0.0f});
+        // Recombination twiddles W_N^k = exp(-2πi k / N), k = 0..M.
+        tw.resize ((size_t) (M + 1));
+        for (int k = 0; k <= M; ++k)
+        {
+            const float a = -kTwoPiF * (float) k / (float) N;
+            tw[(size_t) k] = { std::cos (a), std::sin (a) };
+        }
+    }
+
+    int size() const noexcept { return N; }
+
+    /** Forward: real[N] -> spectrum[0..N/2] (N/2+1 unique complex bins). */
+    void forward (const float* in, std::complex<float>* spec) const
+    {
+        // Pack pairs of reals into a half-length complex sequence.
+        for (int n = 0; n < M; ++n)
+            buffer[(size_t) n] = { in[2 * n], in[2 * n + 1] };
+        half.transform (buffer, false);
+
+        // Split into even/odd DFTs and recombine.
+        for (int k = 0; k <= M; ++k)
+        {
+            const auto Ck  = buffer[(size_t) (k % M)];
+            const auto Cmk = buffer[(size_t) ((M - k) % M)];
+            const auto cCmk = std::conj (Cmk);
+            const std::complex<float> Xe = 0.5f * (Ck + cCmk);
+            const std::complex<float> Xo = std::complex<float> (0.0f, -0.5f) * (Ck - cCmk);
+            spec[(size_t) k] = Xe + tw[(size_t) k] * Xo;
+        }
+    }
+
+    /** Inverse: spectrum[0..N/2] -> real[N].  spec[0] and spec[N/2] should be
+        real; any imaginary part there is ignored. */
+    void inverse (const std::complex<float>* spec, float* out) const
+    {
+        for (int k = 0; k < M; ++k)
+        {
+            const auto Xk  = spec[(size_t) k];
+            const auto Xmk = std::conj (spec[(size_t) (M - k)]);
+            const std::complex<float> Xe = 0.5f * (Xk + Xmk);
+            // Undo the forward twiddle (conjugate) and the -i factor.
+            const std::complex<float> Xo = std::complex<float> (0.0f, 0.5f)
+                                         * std::conj (tw[(size_t) k]) * (Xk - Xmk);
+            buffer[(size_t) k] = Xe + Xo;
+        }
+        half.transform (buffer, true); // inverse (scaled by 1/M)
+        for (int n = 0; n < M; ++n)
+        {
+            out[2 * n]     = buffer[(size_t) n].real();
+            out[2 * n + 1] = buffer[(size_t) n].imag();
+        }
+    }
+
+private:
+    FFT half;
+    int realOrder = 0, N = 0, M = 0;
+    mutable std::vector<std::complex<float>> buffer;
+    std::vector<std::complex<float>> tw;
+};
+
 /** Streaming Weighted-Overlap-Add (WOLA) STFT engine.
 
     Feed it one sample at a time via process(); once a full hop has been
@@ -688,8 +771,8 @@ public:
     /** fftOrder: log2 frame size.  overlap: 2 (50%) or 4 (75%). */
     void prepare (int fftOrder, int overlap, double sr)
     {
-        fft.prepare (fftOrder);
-        size = fft.size();
+        rfft.prepare (fftOrder);
+        size = rfft.size();
         hop  = size / std::max (2, overlap);
         sampleRate = (float) sr;
         inFifoLatency = size - hop;
@@ -715,7 +798,8 @@ public:
         inFifo.assign ((size_t) size, 0.0f);
         outFifo.assign ((size_t) size, 0.0f);
         outAccum.assign ((size_t) (2 * size), 0.0f);
-        frame.assign ((size_t) size, {0.0f, 0.0f});
+        realFrame.assign ((size_t) size, 0.0f);
+        spectrum.assign ((size_t) (size / 2 + 1), {0.0f, 0.0f});
         rover = inFifoLatency;
     }
 
@@ -749,24 +833,23 @@ public:
 private:
     void processFrame (const SpectralCallback& cb)
     {
+        // Windowed analysis into the real frame, then a half-size real FFT.
         for (int i = 0; i < size; ++i)
-            frame[(size_t) i] = { inFifo[(size_t) i] * window[(size_t) i], 0.0f };
+            realFrame[(size_t) i] = inFifo[(size_t) i] * window[(size_t) i];
 
-        fft.transform (frame, false);
+        rfft.forward (realFrame.data(), spectrum.data());
 
-        cb (frame, size / 2 + 1, sampleRate);
+        cb (spectrum, size / 2 + 1, sampleRate);
 
-        // Restore Hermitian symmetry for a purely real inverse result.
-        frame[0].imag (0.0f);
-        frame[(size_t) (size / 2)].imag (0.0f);
-        for (int i = 1; i < size / 2; ++i)
-            frame[(size_t) (size - i)] = std::conj (frame[(size_t) i]);
+        // DC and Nyquist must be real for a purely real inverse.
+        spectrum[0].imag (0.0f);
+        spectrum[(size_t) (size / 2)].imag (0.0f);
 
-        fft.transform (frame, true);
+        rfft.inverse (spectrum.data(), realFrame.data());
 
         // Windowed overlap-add.
         for (int i = 0; i < size; ++i)
-            outAccum[(size_t) i] += window[(size_t) i] * frame[(size_t) i].real() * winNorm;
+            outAccum[(size_t) i] += window[(size_t) i] * realFrame[(size_t) i] * winNorm;
 
         // Drain the head hop into the output FIFO, then shift.
         for (int i = 0; i < hop; ++i) outFifo[(size_t) i] = outAccum[(size_t) i];
@@ -777,13 +860,14 @@ private:
         std::move (inFifo.begin() + hop, inFifo.end(), inFifo.begin());
     }
 
-    FFT fft;
+    RealFFT rfft;
     int size = 0, hop = 0, inFifoLatency = 0, rover = 0;
     float sampleRate = 44100.0f;
     float winNorm = 1.0f;
     std::vector<float> window, inFifo, outFifo;
     std::vector<float> outAccum;
-    std::vector<std::complex<float>> frame;
+    std::vector<float> realFrame;
+    std::vector<std::complex<float>> spectrum;
 };
 
 } // namespace chaos

@@ -4,7 +4,7 @@
 > sound-manipulation engines into a single, freely-routable chaos machine.
 > Built with JUCE on top of a **framework-independent, unit-tested DSP core**.
 
-![status](https://img.shields.io/badge/DSP%20core-152%20checks%20passing-brightgreen)
+![status](https://img.shields.io/badge/DSP%20core-174%20checks%20passing-brightgreen)
 ![modules](https://img.shields.io/badge/modules-10-blueviolet)
 ![presets](https://img.shields.io/badge/factory%20presets-512-ff3d81)
 ![c++](https://img.shields.io/badge/C%2B%2B-17-00e5c8)

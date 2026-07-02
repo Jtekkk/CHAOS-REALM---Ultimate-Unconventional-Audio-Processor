@@ -75,6 +75,34 @@ static void testFFTImpulseAndSine()
     check (otherMax < binMag * 0.01f, "off-bin leakage is small");
 }
 
+static void testRealFFT()
+{
+    section ("RealFFT vs complex FFT + round-trip");
+    for (int order = 3; order <= 13; ++order)
+    {
+        const int n = 1 << order;
+        RealFFT rf; rf.prepare (order);
+        FFT full; full.prepare (order);
+        Xorshift rng (555u + (uint32_t) order);
+
+        std::vector<float> x ((size_t) n), y ((size_t) n);
+        std::vector<std::complex<float>> spec ((size_t) (n / 2 + 1)), ref ((size_t) n);
+        for (int i = 0; i < n; ++i) { x[(size_t) i] = rng.nextBipolar(); ref[(size_t) i] = { x[(size_t) i], 0.0f }; }
+
+        rf.forward (x.data(), spec.data());
+        full.transform (ref, false);
+
+        float fErr = 0.0f;
+        for (int k = 0; k <= n / 2; ++k) fErr = std::max (fErr, std::abs (spec[(size_t) k] - ref[(size_t) k]));
+        check (fErr < 2.0e-3f, "RealFFT matches complex FFT, order " + std::to_string (order));
+
+        rf.inverse (spec.data(), y.data());
+        float rErr = 0.0f;
+        for (int i = 0; i < n; ++i) rErr = std::max (rErr, std::fabs (y[(size_t) i] - x[(size_t) i]));
+        check (rErr < 1.0e-4f, "RealFFT round-trip identity, order " + std::to_string (order));
+    }
+}
+
 static void testSTFTReconstruction()
 {
     section ("STFT overlap-add reconstruction");
@@ -232,6 +260,7 @@ int main()
     testScalarUtils();
     testFFTRoundTrip();
     testFFTImpulseAndSine();
+    testRealFFT();
     testSTFTReconstruction();
     testFilters();
     testDelayLine();

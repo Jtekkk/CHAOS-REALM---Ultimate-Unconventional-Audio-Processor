@@ -83,7 +83,9 @@ module and the full engine under noise, DC, and extreme/random parameters.
 
 ## Shared DSP primitives (`ChaosMath.h`)
 
-- **FFT** — iterative radix-2 Cooley-Tukey (power-of-two).
+- **FFT** — iterative radix-2 Cooley-Tukey (power-of-two), plus **RealFFT**, a
+  real-input transform via a half-size complex FFT (used by the STFT to ~halve
+  the Spectral module's cost).
 - **STFT** — streaming WOLA with sqrt-Hann analysis/synthesis (COLA-correct at
   50 %/75 % overlap), one-frame latency, verified to reconstruct within 2 %.
 - **Filters** — one-pole, RBJ biquad, TPT state-variable, DC blocker.
