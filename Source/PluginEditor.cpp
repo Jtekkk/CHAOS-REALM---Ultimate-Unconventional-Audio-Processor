@@ -3,6 +3,8 @@
 */
 #include "PluginEditor.h"
 
+#include <algorithm>
+
 using APVTS = juce::AudioProcessorValueTreeState;
 namespace C = chaosui::Colours;
 
@@ -282,6 +284,8 @@ ChaosRealmAudioProcessorEditor::ChaosRealmAudioProcessorEditor (ChaosRealmAudioP
     viewport.setScrollBarsShown (true, false);
     addAndMakeVisible (viewport);
 
+    processor.addChangeListener (this);
+
     setResizable (true, true);
     setResizeLimits (820, 560, 1600, 1200);
     setSize (1040, 720);
@@ -289,7 +293,16 @@ ChaosRealmAudioProcessorEditor::ChaosRealmAudioProcessorEditor (ChaosRealmAudioP
 
 ChaosRealmAudioProcessorEditor::~ChaosRealmAudioProcessorEditor()
 {
+    processor.removeChangeListener (this);
     setLookAndFeel (nullptr);
+}
+
+void ChaosRealmAudioProcessorEditor::changeListenerCallback (juce::ChangeBroadcaster*)
+{
+    // The processor loaded new state (session/preset): re-sync the UI.
+    refreshABButtons();
+    syncPanelOrderToProcessor();
+    refreshPresetBox();
 }
 
 void ChaosRealmAudioProcessorEditor::refreshPresetBox()
@@ -315,6 +328,9 @@ void ChaosRealmAudioProcessorEditor::refreshABButtons()
                    active == 0 ? C::accent.withAlpha (0.8f) : C::panelLight);
     abB.setColour (juce::TextButton::buttonColourId,
                    active == 1 ? C::accent.withAlpha (0.8f) : C::panelLight);
+    // The copy button duplicates the ACTIVE slot into the other, so label it
+    // to match the current direction (A>B when A is active, B>A when B is).
+    abCopy.setButtonText (active == 0 ? "A>B" : "B>A");
 }
 
 void ChaosRealmAudioProcessorEditor::relayoutPanels()

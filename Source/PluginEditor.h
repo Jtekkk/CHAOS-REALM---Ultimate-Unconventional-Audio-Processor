@@ -11,6 +11,8 @@
 #include "PluginProcessor.h"
 #include "gui/ChaosLookAndFeel.h"
 
+#include <functional>
+
 //==============================================================================
 /** Real-time FFT spectrum + waveform visualizer fed by the processor's scope. */
 class SpectrumAnalyzer : public juce::Component, private juce::Timer
@@ -77,7 +79,8 @@ private:
 };
 
 //==============================================================================
-class ChaosRealmAudioProcessorEditor : public juce::AudioProcessorEditor
+class ChaosRealmAudioProcessorEditor : public juce::AudioProcessorEditor,
+                                       private juce::ChangeListener
 {
 public:
     explicit ChaosRealmAudioProcessorEditor (ChaosRealmAudioProcessor&);
@@ -85,6 +88,9 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+
+private:
+    void changeListenerCallback (juce::ChangeBroadcaster*) override;
 
 private:
     ChaosRealmAudioProcessor& processor;

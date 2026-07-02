@@ -57,7 +57,11 @@ ChaosRealmAudioProcessor::ChaosRealmAudioProcessor()
     }
 
     // Default identity chain order, mirrored into the state tree.
-    for (int i = 0; i < chaos::kNumModules; ++i) chainOrder[(size_t) i].store (i);
+    {
+        std::array<int, chaos::kNumModules> ident {};
+        for (int i = 0; i < chaos::kNumModules; ++i) ident[(size_t) i] = i;
+        chainOrderPacked.store (packOrder (ident));
+    }
     writeChainOrderToState();
 
     // Initialise both A/B slots from the current (default) state.
@@ -203,10 +207,8 @@ void ChaosRealmAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
 //==============================================================================
 void ChaosRealmAudioProcessor::pushParametersToEngine()
 {
-    // Apply the (lock-free) chain routing.
-    std::array<int, chaos::kNumModules> order {};
-    for (int i = 0; i < chaos::kNumModules; ++i) order[(size_t) i] = chainOrder[(size_t) i].load();
-    engine.setRouting (order);
+    // Apply the (lock-free) chain routing — one atomic load, never torn.
+    engine.setRouting (unpackOrder (chainOrderPacked.load()));
 
     engine.setInputGainDb  (pInGain  ? pInGain->load()  : 0.0f);
     engine.setOutputGainDb (pOutGain ? pOutGain->load() : 0.0f);
@@ -334,65 +336,72 @@ void ChaosRealmAudioProcessor::setStateInformation (const void* data, int sizeIn
         {
             apvts.replaceState (juce::ValueTree::fromXml (*xml));
             applyChainOrderFromState();
-            abState[(size_t) abActive] = apvts.copyState();
+            // Seed both A/B slots from the loaded state so neither surprises the
+            // user with stale constructor-time defaults.
+            abState[0] = apvts.copyState();
+            abState[1] = apvts.copyState();
+            abActive = 0;
+            sendChangeMessage(); // let an open editor re-sync its panel order / UI
         }
 }
 
 //==============================================================================
 //  Chain routing
 //==============================================================================
-void ChaosRealmAudioProcessor::writeChainOrderToState()
+// Return a sanitised valid permutation from an arbitrary index list.
+static std::array<int, chaos::kNumModules> sanitisePermutation (const std::array<int, chaos::kNumModules>& in)
 {
-    juce::String s;
-    for (int i = 0; i < chaos::kNumModules; ++i)
-        s << chainOrder[(size_t) i].load() << (i + 1 < chaos::kNumModules ? "," : "");
-    apvts.state.setProperty ("chainOrder", s, nullptr);
-}
-
-void ChaosRealmAudioProcessor::applyChainOrderFromState()
-{
-    const juce::String s = apvts.state.getProperty ("chainOrder").toString();
-    if (s.isEmpty()) return;
-
-    auto tokens = juce::StringArray::fromTokens (s, ",", "");
-    std::array<int, chaos::kNumModules> order {};
-    bool seen[chaos::kNumModules] = { false };
-    int count = 0;
-    for (int i = 0; i < tokens.size() && count < chaos::kNumModules; ++i)
-    {
-        const int v = tokens[i].getIntValue();
-        if (v >= 0 && v < chaos::kNumModules && ! seen[v]) { order[(size_t) count++] = v; seen[v] = true; }
-    }
-    // Fill any missing indices to guarantee a valid permutation.
-    for (int v = 0; v < chaos::kNumModules && count < chaos::kNumModules; ++v)
-        if (! seen[v]) order[(size_t) count++] = v;
-
-    for (int i = 0; i < chaos::kNumModules; ++i) chainOrder[(size_t) i].store (order[(size_t) i]);
-}
-
-void ChaosRealmAudioProcessor::setChainOrder (const std::array<int, chaos::kNumModules>& order)
-{
-    // Sanitise to a valid permutation.
     std::array<int, chaos::kNumModules> clean {};
     bool seen[chaos::kNumModules] = { false };
     int count = 0;
     for (int i = 0; i < chaos::kNumModules; ++i)
     {
-        const int v = order[(size_t) i];
+        const int v = in[(size_t) i];
         if (v >= 0 && v < chaos::kNumModules && ! seen[v]) { clean[(size_t) count++] = v; seen[v] = true; }
     }
     for (int v = 0; v < chaos::kNumModules && count < chaos::kNumModules; ++v)
         if (! seen[v]) clean[(size_t) count++] = v;
+    return clean;
+}
 
-    for (int i = 0; i < chaos::kNumModules; ++i) chainOrder[(size_t) i].store (clean[(size_t) i]);
+void ChaosRealmAudioProcessor::writeChainOrderToState()
+{
+    const auto order = unpackOrder (chainOrderPacked.load());
+    juce::String s;
+    for (int i = 0; i < chaos::kNumModules; ++i)
+        s << order[(size_t) i] << (i + 1 < chaos::kNumModules ? "," : "");
+    apvts.state.setProperty ("chainOrder", s, nullptr);
+}
+
+void ChaosRealmAudioProcessor::applyChainOrderFromState()
+{
+    std::array<int, chaos::kNumModules> order {};
+    const juce::String s = apvts.state.getProperty ("chainOrder").toString();
+    if (s.isEmpty())
+    {
+        // No routing stored (e.g. loading an older/foreign state): reset to
+        // identity rather than keeping the previous custom order.
+        for (int i = 0; i < chaos::kNumModules; ++i) order[(size_t) i] = i;
+    }
+    else
+    {
+        auto tokens = juce::StringArray::fromTokens (s, ",", "");
+        for (int i = 0; i < chaos::kNumModules; ++i)
+            order[(size_t) i] = (i < tokens.size() ? tokens[i].getIntValue() : -1);
+        order = sanitisePermutation (order);
+    }
+    chainOrderPacked.store (packOrder (order));
+}
+
+void ChaosRealmAudioProcessor::setChainOrder (const std::array<int, chaos::kNumModules>& order)
+{
+    chainOrderPacked.store (packOrder (sanitisePermutation (order)));
     writeChainOrderToState();
 }
 
 std::array<int, chaos::kNumModules> ChaosRealmAudioProcessor::getChainOrder() const
 {
-    std::array<int, chaos::kNumModules> order {};
-    for (int i = 0; i < chaos::kNumModules; ++i) order[(size_t) i] = chainOrder[(size_t) i].load();
-    return order;
+    return unpackOrder (chainOrderPacked.load());
 }
 
 //==============================================================================

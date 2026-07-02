@@ -19,7 +19,10 @@
 #include <vector>
 
 //==============================================================================
-class ChaosRealmAudioProcessor : public juce::AudioProcessor
+/** Also a ChangeBroadcaster: it notifies an open editor after a host state
+    load so the editor can re-sync its panel order / A-B / preset display. */
+class ChaosRealmAudioProcessor : public juce::AudioProcessor,
+                                 public juce::ChangeBroadcaster
 {
 public:
     ChaosRealmAudioProcessor();
@@ -130,9 +133,25 @@ private:
     std::atomic<int>   scopeWritePos { 0 };
     void pushToScope (const juce::AudioBuffer<float>& buffer, int numCh) noexcept;
 
-    // Chain routing: runtime source of truth is the atomics (read on the audio
-    // thread); the state tree property mirrors it for persistence.
-    std::array<std::atomic<int>, chaos::kNumModules> chainOrder;
+    // Chain routing: the permutation is packed into a single atomic (4 bits per
+    // module index, 10 modules = 40 bits) so the audio thread always reads a
+    // consistent, non-torn order. The state-tree property mirrors it for
+    // persistence.
+    std::atomic<uint64_t> chainOrderPacked { 0 };
+    static uint64_t packOrder (const std::array<int, chaos::kNumModules>& o) noexcept
+    {
+        uint64_t v = 0;
+        for (int i = 0; i < chaos::kNumModules; ++i)
+            v |= (uint64_t) (o[(size_t) i] & 0xF) << (i * 4);
+        return v;
+    }
+    static std::array<int, chaos::kNumModules> unpackOrder (uint64_t v) noexcept
+    {
+        std::array<int, chaos::kNumModules> o {};
+        for (int i = 0; i < chaos::kNumModules; ++i)
+            o[(size_t) i] = (int) ((v >> (i * 4)) & 0xF);
+        return o;
+    }
 
     // A/B compare snapshots (message-thread only).
     juce::ValueTree abState[2];
