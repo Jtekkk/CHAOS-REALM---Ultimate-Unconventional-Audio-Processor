@@ -12,6 +12,7 @@
 #include <juce_dsp/juce_dsp.h>
 
 #include "dsp/ChaosEngine.h"
+#include "dsp/PresetFactory.h"
 #include "PresetManager.h"
 
 #include <array>
@@ -54,6 +55,19 @@ public:
     chaos::ChaosEngine&                 getEngine() noexcept { return engine; }
     PresetManager&                      getPresetManager() noexcept { return presetManager; }
 
+    // -- Chain routing (persisted in state, applied each block) ------------
+    /** order[position] = module index. Sanitised to a valid permutation. */
+    void setChainOrder (const std::array<int, chaos::kNumModules>& order);
+    std::array<int, chaos::kNumModules> getChainOrder() const;
+
+    // -- A/B compare -------------------------------------------------------
+    void setActiveABSlot (int slot);            // 0 = A, 1 = B
+    int  getActiveABSlot() const noexcept { return abActive; }
+    void copyActiveABToOther();                 // duplicate active slot into the other
+
+    // -- Randomize ---------------------------------------------------------
+    void randomize (float amount);              // amount 0..1 (wildness)
+
     /** Flat list of every modulation destination (module param), built once. */
     struct Destination { int moduleIndex, paramIndex; juce::String label; };
     const std::vector<Destination>& destinations() const noexcept { return destList; }
@@ -72,6 +86,9 @@ private:
     void buildDestinationList();
     void pushParametersToEngine();
     void configureModulation();
+    void writeChainOrderToState();      // atomics -> state property
+    void applyChainOrderFromState();    // state property -> atomics
+    void applyPresetValues (const chaos::Preset& preset);
 
     //==========================================================================
     chaos::ChaosEngine engine;                 // declared BEFORE apvts (used by createLayout)
@@ -112,6 +129,16 @@ private:
     std::vector<float> scopeRing;
     std::atomic<int>   scopeWritePos { 0 };
     void pushToScope (const juce::AudioBuffer<float>& buffer, int numCh) noexcept;
+
+    // Chain routing: runtime source of truth is the atomics (read on the audio
+    // thread); the state tree property mirrors it for persistence.
+    std::array<std::atomic<int>, chaos::kNumModules> chainOrder;
+
+    // A/B compare snapshots (message-thread only).
+    juce::ValueTree abState[2];
+    int abActive = 0;
+
+    uint32_t randSeed = 0x51ED51EDu; // advanced on each randomize()
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChaosRealmAudioProcessor)
 };

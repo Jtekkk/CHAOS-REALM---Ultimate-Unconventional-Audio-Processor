@@ -12,8 +12,10 @@
 */
 #include "../Source/dsp/ChaosEngine.h"
 #include "../Source/dsp/modules/AllModules.h"
+#include "../Source/dsp/PresetFactory.h"
 #include "TestFramework.h"
 
+#include <string>
 #include <vector>
 
 using namespace chaos;
@@ -154,6 +156,56 @@ static void testEngineFull()
     check (tailRms < 0.08f, "engine: chain settles toward silence, tailRMS=" + std::to_string (tailRms));
 }
 
+// Apply a factory/random Preset (paramPath -> value) to an engine.  Mirrors the
+// plugin's APVTS applier but operates directly on the engine for testing.
+static void applyPresetToEngine (ChaosEngine& e, const Preset& p)
+{
+    for (const auto& kv : p.values)
+    {
+        const std::string& id = kv.first;
+        const float v = kv.second;
+        if      (id == "in_gain")    e.setInputGainDb (v);
+        else if (id == "out_gain")   e.setOutputGainDb (v);
+        else if (id == "master_mix") e.setMasterMix (v);
+        else if (! id.empty() && id[0] == 'm')
+        {
+            const size_t us = id.find ('_');
+            if (us == std::string::npos) continue;
+            const int mi = std::stoi (id.substr (1, us - 1));
+            if (mi < 0 || mi >= kNumModules) continue;
+            const std::string rest = id.substr (us + 1);
+            if      (rest == "on")  e.setModuleEnabled (mi, v > 0.5f);
+            else if (rest == "mix") e.setModuleMix (mi, v);
+            else if (! rest.empty() && rest[0] == 'p')
+                e.module (mi).snapParameter (std::stoi (rest.substr (1)), v);
+        }
+    }
+}
+
+static void testRandomizerStability()
+{
+    section ("randomizer — every random preset stays safe");
+    ChaosEngine eng; eng.prepare (kSR, kBlock, kChannels);
+    Xorshift rng (0xA11CEu);
+    auto proc = [&] (float* const* p, int c, int n) { eng.process (p, c, n); };
+
+    bool allFinite = true, allBounded = true;
+    const int trials = 48;
+    for (int t = 0; t < trials; ++t)
+    {
+        const float amount = 0.3f + 0.7f * ((float) t / (float) trials);
+        const auto preset = PresetFactory::randomPreset (eng, 0x1000u + (uint32_t) t * 2654435761u, amount);
+        applyPresetToEngine (eng, preset);
+        eng.reset();
+        bool fin = true;
+        const float peak = runSeconds (0.8, [&] (Buf& b) { b.fillNoise (rng, 0.5f); }, proc, fin);
+        if (! fin) allFinite = false;
+        if (peak >= 16.0f) allBounded = false;
+    }
+    check (allFinite,  "all " + std::to_string (trials) + " random presets stay finite");
+    check (allBounded, "all " + std::to_string (trials) + " random presets stay bounded");
+}
+
 int main()
 {
     std::printf ("CHAOS REALM — module & engine stability suite\n\n");
@@ -163,5 +215,6 @@ int main()
         stabilityBattery (*m, m->getName());
     }
     testEngineFull();
+    testRandomizerStability();
     return summary();
 }

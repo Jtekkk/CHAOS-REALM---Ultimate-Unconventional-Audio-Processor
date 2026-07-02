@@ -12,10 +12,12 @@ point in the chain — at its default settings it is stable and musical.
 ┌───────────────────────────────────────────────────────────────────────┐
 │ CHAOS REALM        [ < ] [ Preset browser ▾ ] [ > ]   In  Out  Master OS│  header
 ├───────────────────────────────────────────────────────────────────────┤
+│ [A] [B] [A>B]  [ Randomize ] (◔ amount)                                 │  toolbar
+├───────────────────────────────────────────────────────────────────────┤
 │ ░░░░░░░░░░░░░  live spectrum analyzer  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ │
 ├───────────────────────────────────────────────────────────────────────┤
-│ ▌[on] Module 1 ……… Mix  ● ● ● ● ● ● ●   (rotary knobs, one per param)  │
-│ ▌[on] Module 2 ……… Mix  ● ● ● ● ● ● ●                                  │  scrollable
+│ ▌[on] Module 1 ……… Mix  ● ● ● ● ● ● ●   (rotary knobs, one per param) ≡ │
+│ ▌[on] Module 2 ……… Mix  ● ● ● ● ● ● ●                                ≡ │  scrollable
 │  …                                                                      │  module stack
 └───────────────────────────────────────────────────────────────────────┘
 ```
@@ -25,6 +27,13 @@ point in the chain — at its default settings it is stable and musical.
 - **Master** — global dry/wet.
 - **OS** — oversampling: 1×, 2×, 4×, 8×, 16× (higher = cleaner non-linearities, more CPU & latency).
 - Each **module panel** has an on/off switch, a **Mix** (per-module dry/wet), and its parameters as rotary knobs. Modules process **top to bottom** in the order shown.
+- **Drag to reorder** — grab a module panel by its header (the `≡` grip) and drag it up or down to change its position in the chain. The order is saved with your project.
+
+### A/B compare & Randomize (toolbar)
+
+- **A / B** — two independent snapshots of the *entire* plugin state (every module, parameter, and the chain order). Switching stores your current settings into the active slot and recalls the other — perfect for comparing two treatments.
+- **A>B** — copies the active slot into the other, so you can branch from a starting point.
+- **Randomize** — generates a fresh, constrained-random patch. The small knob beside it sets the **amount** (how many modules turn on and how far parameters stray). Randomized patches are always safe (they can never produce a runaway or NaN — this is enforced by the test suite).
 
 ---
 

@@ -46,7 +46,19 @@ public:
     void resized() override;
     int  preferredHeight() const noexcept;
 
+    int getModuleIndex() const noexcept { return index; }
+
+    // Drag-to-reorder: dragging the panel header notifies the editor.
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp   (const juce::MouseEvent&) override;
+    std::function<void (ModulePanel*, const juce::MouseEvent&)> onDragMove;
+    std::function<void (ModulePanel*)> onDragEnd;
+
 private:
+    static constexpr int kHeaderH = 26;
+    bool draggingHeader = false;
+
     ChaosRealmAudioProcessor& processor;
     int index;
     juce::String moduleName;
@@ -91,11 +103,21 @@ private:
     juce::TextButton prevPreset { "<" }, nextPreset { ">" };
     void refreshPresetBox();
 
+    // A/B compare + randomize toolbar.
+    juce::TextButton abA { "A" }, abB { "B" }, abCopy { "A>B" }, randomizeBtn { "Randomize" };
+    juce::Slider randomAmount;
+    void refreshABButtons();
+
     SpectrumAnalyzer analyzer;
 
     juce::Viewport viewport;
     juce::Component moduleContainer;
-    juce::OwnedArray<ModulePanel> panels;
+    juce::OwnedArray<ModulePanel> panels;   // stored in chain order
+
+    void relayoutPanels();
+    void dragPanel (ModulePanel* p, const juce::MouseEvent& e);
+    void commitChainOrder();
+    void syncPanelOrderToProcessor();   // reorder panels to match engine routing
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChaosRealmAudioProcessorEditor)
 };

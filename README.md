@@ -33,7 +33,8 @@ combination, then modulated by a global LFO / envelope / macro matrix.
 
 ### Highlights
 
-- **Modular chain** — any subset of modules, each with independent dry/wet & bypass.
+- **Modular chain** — any subset of modules, each with independent dry/wet & bypass, **drag-to-reorder** (order saved with the project).
+- **A/B compare & Randomize** — two full-state snapshots and a constrained, always-safe randomizer.
 - **Latency-compensated** — modules that buffer (the spectral STFT) are dry-aligned automatically; the plugin reports correct PDC to the host.
 - **Variable oversampling** — 1× to 16× via JUCE polyphase IIR.
 - **Modulation matrix** — 4 LFOs (6 shapes incl. chaotic S&H), an envelope follower, 4 macros → any module parameter.

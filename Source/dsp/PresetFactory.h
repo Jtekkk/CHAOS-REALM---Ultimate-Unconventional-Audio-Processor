@@ -117,6 +117,37 @@ public:
         return out;
     }
 
+    /** Generate a single randomised preset for the "Randomize" button.
+        'amount' (0..1) controls how wild the result is: it scales both the
+        probability of enabling each module and how far parameters stray from
+        their defaults.  Deterministic for a given seed. */
+    static Preset randomPreset (const ChaosEngine& engine, uint32_t seed, float amount = 0.6f)
+    {
+        Xorshift rng (seed ? seed : 1u);
+        amount = clampf (amount, 0.05f, 1.0f);
+
+        Preset p;
+        p.category = "Random";
+        p.name = "Random";
+        addGlobals (p, 0.0f, 0.0f, 0.7f + 0.3f * rng.nextFloat());
+
+        // Enable each module with probability scaled by amount; always keep at
+        // least one on so the result is audible.
+        for (int i = 0; i < kNumModules; ++i) addModuleOff (p, engine, i);
+        int enabledCount = 0;
+        const float pEnable = 0.2f + 0.5f * amount;
+        for (int i = 0; i < kNumModules; ++i)
+            if (rng.nextFloat() < pEnable)
+            {
+                enableAndRandomise (p, engine, i, amount, rng);
+                ++enabledCount;
+            }
+        if (enabledCount == 0)
+            enableAndRandomise (p, engine, (int) (rng.nextUInt() % (uint32_t) kNumModules), amount, rng);
+
+        return p;
+    }
+
 private:
     static std::string tag (int i) { return "m" + std::to_string (i); }
 

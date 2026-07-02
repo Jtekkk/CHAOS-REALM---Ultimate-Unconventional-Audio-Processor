@@ -137,6 +137,11 @@ void ModulePanel::paint (juce::Graphics& g)
     const auto accents = std::array<juce::Colour, 3> { C::accent, C::accent2, C::accent3 };
     g.setColour (accents[(size_t) (index % 3)].withAlpha (on ? 0.9f : 0.35f));
     g.fillRoundedRectangle (b.getX() + 2.0f, b.getY() + 6.0f, 4.0f, b.getHeight() - 12.0f, 2.0f);
+
+    // Drag-grip hint at the top-right of the header (drag to reorder the chain).
+    g.setColour (C::textDim);
+    const float gx = b.getRight() - 18.0f, gy = b.getY() + 8.0f;
+    for (int i = 0; i < 3; ++i) g.fillRect (gx, gy + (float) i * 4.0f, 12.0f, 1.5f);
 }
 
 void ModulePanel::resized()
@@ -163,6 +168,23 @@ void ModulePanel::resized()
         place (*paramSliders[i], *paramLabels[i]);
     }
     juce::ignoreUnused (knobH);
+}
+
+void ModulePanel::mouseDown (const juce::MouseEvent& e)
+{
+    // Only the header background (not the toggle/knobs) initiates a drag.
+    draggingHeader = e.y < kHeaderH;
+}
+
+void ModulePanel::mouseDrag (const juce::MouseEvent& e)
+{
+    if (draggingHeader && onDragMove) onDragMove (this, e);
+}
+
+void ModulePanel::mouseUp (const juce::MouseEvent&)
+{
+    if (draggingHeader && onDragEnd) onDragEnd (this);
+    draggingHeader = false;
 }
 
 //==============================================================================
@@ -222,11 +244,39 @@ ChaosRealmAudioProcessorEditor::ChaosRealmAudioProcessorEditor (ChaosRealmAudioP
                                  juce::dontSendNotification);
     };
 
+    // A/B compare + randomize toolbar.
+    for (auto* b : { &abA, &abB, &abCopy, &randomizeBtn }) addAndMakeVisible (b);
+    abA.setClickingTogglesState (false);
+    abB.setClickingTogglesState (false);
+    abA.onClick = [this] { processor.setActiveABSlot (0); refreshABButtons(); syncPanelOrderToProcessor(); };
+    abB.onClick = [this] { processor.setActiveABSlot (1); refreshABButtons(); syncPanelOrderToProcessor(); };
+    abCopy.onClick = [this] { processor.copyActiveABToOther(); };
+    randomizeBtn.onClick = [this]
+    {
+        // Randomize touches parameters (via the host), not routing, so the
+        // panel order is unaffected. Attachments update the knobs automatically.
+        processor.randomize ((float) randomAmount.getValue());
+    };
+    randomAmount.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+    randomAmount.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    randomAmount.setRange (0.05, 1.0, 0.01);
+    randomAmount.setValue (0.6);
+    randomAmount.setTooltip ("Randomize amount");
+    addAndMakeVisible (randomAmount);
+    refreshABButtons();
+
     addAndMakeVisible (analyzer);
 
-    // Module panels inside a scrollable viewport.
-    for (int i = 0; i < chaos::kNumModules; ++i)
-        panels.add (new ModulePanel (processor, i));
+    // Module panels inside a scrollable viewport, built in the current chain
+    // order so drag-reordering round-trips with saved state.
+    const auto order = processor.getChainOrder();
+    for (int pos = 0; pos < chaos::kNumModules; ++pos)
+    {
+        auto* pnl = new ModulePanel (processor, order[(size_t) pos]);
+        pnl->onDragMove = [this] (ModulePanel* p, const juce::MouseEvent& e) { dragPanel (p, e); };
+        pnl->onDragEnd  = [this] (ModulePanel*) { commitChainOrder(); };
+        panels.add (pnl);
+    }
     for (auto* pnl : panels) moduleContainer.addAndMakeVisible (pnl);
     viewport.setViewedComponent (&moduleContainer, false);
     viewport.setScrollBarsShown (true, false);
@@ -256,6 +306,58 @@ void ChaosRealmAudioProcessorEditor::refreshPresetBox()
     presetBox.setTextWhenNothingSelected ("Presets");
     if (pm.getNumPresets() > 0)
         presetBox.setSelectedId (pm.getCurrentIndex() + 1, juce::dontSendNotification);
+}
+
+void ChaosRealmAudioProcessorEditor::refreshABButtons()
+{
+    const int active = processor.getActiveABSlot();
+    abA.setColour (juce::TextButton::buttonColourId,
+                   active == 0 ? C::accent.withAlpha (0.8f) : C::panelLight);
+    abB.setColour (juce::TextButton::buttonColourId,
+                   active == 1 ? C::accent.withAlpha (0.8f) : C::panelLight);
+}
+
+void ChaosRealmAudioProcessorEditor::relayoutPanels()
+{
+    const int w = juce::jmax (10, viewport.getWidth() - 14);
+    int y = 0;
+    for (auto* pnl : panels) { pnl->setBounds (0, y, w, pnl->preferredHeight()); y += pnl->preferredHeight(); }
+    moduleContainer.setSize (w, y);
+}
+
+void ChaosRealmAudioProcessorEditor::dragPanel (ModulePanel* p, const juce::MouseEvent& e)
+{
+    const int from = panels.indexOf (p);
+    if (from < 0) return;
+    const auto pos = e.getEventRelativeTo (&moduleContainer).position;
+    const int rowH = juce::jmax (1, p->preferredHeight());
+    const int to = juce::jlimit (0, panels.size() - 1, (int) (pos.y / (float) rowH));
+    if (to != from)
+    {
+        panels.move (from, to);
+        relayoutPanels();
+    }
+}
+
+void ChaosRealmAudioProcessorEditor::commitChainOrder()
+{
+    std::array<int, chaos::kNumModules> order {};
+    for (int pos = 0; pos < panels.size() && pos < chaos::kNumModules; ++pos)
+        order[(size_t) pos] = panels[pos]->getModuleIndex();
+    processor.setChainOrder (order);
+}
+
+void ChaosRealmAudioProcessorEditor::syncPanelOrderToProcessor()
+{
+    const auto order = processor.getChainOrder();
+    for (int pos = 0; pos < (int) order.size() && pos < panels.size(); ++pos)
+        for (int j = pos; j < panels.size(); ++j)
+            if (panels[j]->getModuleIndex() == order[(size_t) pos])
+            {
+                if (j != pos) panels.move (j, pos);
+                break;
+            }
+    relayoutPanels();
 }
 
 void ChaosRealmAudioProcessorEditor::paint (juce::Graphics& g)
@@ -308,11 +410,16 @@ void ChaosRealmAudioProcessorEditor::resized()
     presetArea.removeFromRight (4);
     presetBox.setBounds (presetArea.removeFromLeft (juce::jmin (280, presetArea.getWidth())));
 
-    analyzer.setBounds (b.removeFromTop (150).reduced (8, 4));
+    // Toolbar strip: A/B compare + randomize.
+    auto toolbar = b.removeFromTop (28).reduced (8, 3);
+    abA.setBounds (toolbar.removeFromLeft (34)); toolbar.removeFromLeft (2);
+    abB.setBounds (toolbar.removeFromLeft (34)); toolbar.removeFromLeft (2);
+    abCopy.setBounds (toolbar.removeFromLeft (44)); toolbar.removeFromLeft (10);
+    randomizeBtn.setBounds (toolbar.removeFromLeft (96)); toolbar.removeFromLeft (4);
+    randomAmount.setBounds (toolbar.removeFromLeft (24));
+
+    analyzer.setBounds (b.removeFromTop (140).reduced (8, 4));
 
     viewport.setBounds (b.reduced (6, 2));
-    const int w = viewport.getWidth() - 14;
-    int y = 0;
-    for (auto* pnl : panels) { pnl->setBounds (0, y, w, pnl->preferredHeight()); y += pnl->preferredHeight(); }
-    moduleContainer.setSize (w, y);
+    relayoutPanels();
 }

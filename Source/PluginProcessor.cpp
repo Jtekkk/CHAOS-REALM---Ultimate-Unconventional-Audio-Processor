@@ -55,6 +55,14 @@ ChaosRealmAudioProcessor::ChaosRealmAudioProcessor()
         pModSlots[(size_t) s].dst   = apvts.getRawParameterValue ("mod" + juce::String (s + 1) + "_dst");
         pModSlots[(size_t) s].depth = apvts.getRawParameterValue ("mod" + juce::String (s + 1) + "_depth");
     }
+
+    // Default identity chain order, mirrored into the state tree.
+    for (int i = 0; i < chaos::kNumModules; ++i) chainOrder[(size_t) i].store (i);
+    writeChainOrderToState();
+
+    // Initialise both A/B slots from the current (default) state.
+    abState[0] = apvts.copyState();
+    abState[1] = apvts.copyState();
 }
 
 //==============================================================================
@@ -195,6 +203,11 @@ void ChaosRealmAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
 //==============================================================================
 void ChaosRealmAudioProcessor::pushParametersToEngine()
 {
+    // Apply the (lock-free) chain routing.
+    std::array<int, chaos::kNumModules> order {};
+    for (int i = 0; i < chaos::kNumModules; ++i) order[(size_t) i] = chainOrder[(size_t) i].load();
+    engine.setRouting (order);
+
     engine.setInputGainDb  (pInGain  ? pInGain->load()  : 0.0f);
     engine.setOutputGainDb (pOutGain ? pOutGain->load() : 0.0f);
     engine.setMasterMix    (pMasterMix ? pMasterMix->load() : 1.0f);
@@ -309,6 +322,7 @@ juce::AudioProcessorEditor* ChaosRealmAudioProcessor::createEditor()
 
 void ChaosRealmAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
+    writeChainOrderToState(); // ensure the persisted order is current
     if (auto xml = apvts.copyState().createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -317,7 +331,108 @@ void ChaosRealmAudioProcessor::setStateInformation (const void* data, int sizeIn
 {
     if (auto xml = getXmlFromBinary (data, sizeInBytes))
         if (xml->hasTagName (apvts.state.getType()))
+        {
             apvts.replaceState (juce::ValueTree::fromXml (*xml));
+            applyChainOrderFromState();
+            abState[(size_t) abActive] = apvts.copyState();
+        }
+}
+
+//==============================================================================
+//  Chain routing
+//==============================================================================
+void ChaosRealmAudioProcessor::writeChainOrderToState()
+{
+    juce::String s;
+    for (int i = 0; i < chaos::kNumModules; ++i)
+        s << chainOrder[(size_t) i].load() << (i + 1 < chaos::kNumModules ? "," : "");
+    apvts.state.setProperty ("chainOrder", s, nullptr);
+}
+
+void ChaosRealmAudioProcessor::applyChainOrderFromState()
+{
+    const juce::String s = apvts.state.getProperty ("chainOrder").toString();
+    if (s.isEmpty()) return;
+
+    auto tokens = juce::StringArray::fromTokens (s, ",", "");
+    std::array<int, chaos::kNumModules> order {};
+    bool seen[chaos::kNumModules] = { false };
+    int count = 0;
+    for (int i = 0; i < tokens.size() && count < chaos::kNumModules; ++i)
+    {
+        const int v = tokens[i].getIntValue();
+        if (v >= 0 && v < chaos::kNumModules && ! seen[v]) { order[(size_t) count++] = v; seen[v] = true; }
+    }
+    // Fill any missing indices to guarantee a valid permutation.
+    for (int v = 0; v < chaos::kNumModules && count < chaos::kNumModules; ++v)
+        if (! seen[v]) order[(size_t) count++] = v;
+
+    for (int i = 0; i < chaos::kNumModules; ++i) chainOrder[(size_t) i].store (order[(size_t) i]);
+}
+
+void ChaosRealmAudioProcessor::setChainOrder (const std::array<int, chaos::kNumModules>& order)
+{
+    // Sanitise to a valid permutation.
+    std::array<int, chaos::kNumModules> clean {};
+    bool seen[chaos::kNumModules] = { false };
+    int count = 0;
+    for (int i = 0; i < chaos::kNumModules; ++i)
+    {
+        const int v = order[(size_t) i];
+        if (v >= 0 && v < chaos::kNumModules && ! seen[v]) { clean[(size_t) count++] = v; seen[v] = true; }
+    }
+    for (int v = 0; v < chaos::kNumModules && count < chaos::kNumModules; ++v)
+        if (! seen[v]) clean[(size_t) count++] = v;
+
+    for (int i = 0; i < chaos::kNumModules; ++i) chainOrder[(size_t) i].store (clean[(size_t) i]);
+    writeChainOrderToState();
+}
+
+std::array<int, chaos::kNumModules> ChaosRealmAudioProcessor::getChainOrder() const
+{
+    std::array<int, chaos::kNumModules> order {};
+    for (int i = 0; i < chaos::kNumModules; ++i) order[(size_t) i] = chainOrder[(size_t) i].load();
+    return order;
+}
+
+//==============================================================================
+//  A/B compare
+//==============================================================================
+void ChaosRealmAudioProcessor::setActiveABSlot (int slot)
+{
+    slot = juce::jlimit (0, 1, slot);
+    if (slot == abActive) return;
+    abState[(size_t) abActive] = apvts.copyState();      // save current into the active slot
+    abActive = slot;
+    if (abState[(size_t) slot].isValid())
+    {
+        apvts.replaceState (abState[(size_t) slot].createCopy());
+        applyChainOrderFromState();
+    }
+}
+
+void ChaosRealmAudioProcessor::copyActiveABToOther()
+{
+    abState[(size_t) abActive] = apvts.copyState();
+    abState[(size_t) (abActive ^ 1)] = apvts.copyState();
+}
+
+//==============================================================================
+//  Randomize
+//==============================================================================
+void ChaosRealmAudioProcessor::applyPresetValues (const chaos::Preset& preset)
+{
+    for (const auto& kv : preset.values)
+        if (auto* param = apvts.getParameter (juce::String (kv.first)))
+            param->setValueNotifyingHost (param->convertTo0to1 (kv.second));
+}
+
+void ChaosRealmAudioProcessor::randomize (float amount)
+{
+    randSeed = randSeed * 1664525u + 1013904223u;        // advance the LCG
+    const auto preset = chaos::PresetFactory::randomPreset (engine, randSeed, amount);
+    applyPresetValues (preset);
+    // Random presets don't touch routing; keep the current chain order.
 }
 
 //==============================================================================
