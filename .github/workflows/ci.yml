@@ -1,0 +1,43 @@
+name: CHAOS REALM CI
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
+
+jobs:
+  dsp-tests:
+    name: DSP core & stability tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (DSP only, no JUCE)
+        run: cmake -B build -DCHAOS_BUILD_PLUGIN=OFF -DCHAOS_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
+
+  preset-bank:
+    name: Preset bank regenerates & matches
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Regenerate preset bank
+        run: |
+          g++ -std=c++17 -O2 tools/generate_presets.cpp Source/dsp/ChaosEngine.cpp \
+              Source/dsp/modules/*.cpp -I. -o genpresets
+          ./genpresets 512 /tmp/RegeneratedPresets.xml
+
+      - name: Verify determinism (committed bank is up to date)
+        run: |
+          if ! diff -q presets/FactoryPresets.xml /tmp/RegeneratedPresets.xml; then
+            echo "::error::presets/FactoryPresets.xml is out of date — re-run tools/generate_presets.cpp"
+            exit 1
+          fi
+          echo "Preset bank is deterministic and up to date."

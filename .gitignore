@@ -1,0 +1,29 @@
+# Build output
+build/
+build-*/
+cmake-build-*/
+out/
+*.o
+*.obj
+*.a
+*.lib
+
+# Fetched dependencies
+_deps/
+JUCE/
+
+# Plugin build artifacts
+*.vst3
+*.component
+*.app
+*.exe
+
+# IDE / OS
+.vscode/
+.idea/
+*.xcodeproj/
+*.DS_Store
+Thumbs.db
+
+# Local test binaries
+/tmp_tests/
