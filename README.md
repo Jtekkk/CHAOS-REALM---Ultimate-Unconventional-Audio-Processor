@@ -105,6 +105,24 @@ Artifacts appear under `build/CHAOSRealm_artefacts/`.
 > The DSP core is validated in this repo's CI on every push. The plugin binary
 > is built on a machine with the platform GUI/audio SDK dependencies above.
 
+### Windows installer (automated)
+
+The **Windows Installer** GitHub Action (`.github/workflows/windows-installer.yml`)
+builds the plugin with MSVC and packages the VST3 + Standalone into a single
+Inno Setup installer:
+
+- **Manual:** Actions → *Windows Installer* → *Run workflow* (optionally set a
+  version). The installer is uploaded as a downloadable build artifact.
+- **Release:** push a version tag and it is published to a GitHub Release:
+  ```bash
+  git tag v1.0.0 && git push origin v1.0.0
+  ```
+
+The installer places `CHAOS REALM.vst3` in the standard shared VST3 folder
+(`C:\Program Files\Common Files\VST3`) and optionally installs the Standalone
+app. The Inno Setup script lives at `packaging/windows/CHAOSRealm.iss` and can
+be run locally too.
+
 ---
 
 ## Regenerating the preset bank
