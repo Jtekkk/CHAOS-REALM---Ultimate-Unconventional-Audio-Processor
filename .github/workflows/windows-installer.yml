@@ -10,6 +10,9 @@ name: Windows Installer
 on:
   push:
     tags: [ "v*" ]
+    # Temporary: validate the MSVC build on this feature branch (no Release is
+    # created — the publish step below is gated on tags). Remove once green.
+    branches: [ "claude/chaos-realm-vst-plugin-lyr3vt" ]
   workflow_dispatch:
     inputs:
       version:
