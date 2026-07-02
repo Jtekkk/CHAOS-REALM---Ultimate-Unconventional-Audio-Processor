@@ -47,16 +47,26 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/_deps
-          key: juce-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
-          restore-keys: juce-${{ runner.os }}-
+          key: juce-${{ runner.os }}-ninja-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: juce-${{ runner.os }}-ninja-
+
+      # Build with Ninja + the MSVC dev environment instead of the Visual Studio
+      # generator: agnostic to the runner's VS version and avoids the
+      # MSBuild-based FetchContent sub-build that fails on the newest CMake/VS
+      # runner images.
+      - name: Set up MSVC (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+
+      - name: Set up Ninja
+        run: choco install ninja -y --no-progress
 
       - name: Configure (Release, plugin only)
-        # Let CMake auto-detect the installed Visual Studio generator (the
-        # runner image's VS version changes over time), forcing a 64-bit build.
-        run: cmake -B build -A x64 -DCMAKE_BUILD_TYPE=Release -DCHAOS_BUILD_TESTS=OFF -DCHAOS_BUILD_PLUGIN=ON
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCHAOS_BUILD_TESTS=OFF -DCHAOS_BUILD_PLUGIN=ON
 
       - name: Build
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --parallel
 
       - name: Stage artifacts
         id: stage
