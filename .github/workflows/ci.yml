@@ -22,6 +22,12 @@ jobs:
       - name: Run tests
         run: ctest --test-dir build --output-on-failure
 
+      - name: Performance benchmark (informational)
+        run: |
+          g++ -std=c++17 -O3 -DNDEBUG tools/benchmark.cpp Source/dsp/ChaosEngine.cpp \
+              Source/dsp/modules/*.cpp -I. -o bench
+          ./bench
+
   preset-bank:
     name: Preset bank regenerates & matches
     runs-on: ubuntu-latest

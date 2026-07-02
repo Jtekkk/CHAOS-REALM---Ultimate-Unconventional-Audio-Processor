@@ -135,6 +135,7 @@ Both run in CI (`.github/workflows/ci.yml`).
 - [`docs/Architecture.md`](docs/Architecture.md) — how the core, engine, and modules fit together.
 - [`docs/UserManual.md`](docs/UserManual.md) — every parameter of every module, and how to use them.
 - [`docs/DeveloperGuide.md`](docs/DeveloperGuide.md) — how to write your own module against `ModuleBase`.
+- [`docs/Performance.md`](docs/Performance.md) — measured CPU / memory / latency vs. the stated targets.
 - [`README_ORIGINAL_VISION.md`](README_ORIGINAL_VISION.md) — the original design brief this project realises.
 
 ---

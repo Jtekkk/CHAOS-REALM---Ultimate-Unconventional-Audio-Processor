@@ -7,6 +7,34 @@
 namespace chaos
 {
 
+namespace
+{
+// Precomputed equal-power crossfade table — removes two trig calls per sample
+// per active module from the audio hot path.  Indexed by the (smoothed) mix.
+struct EqualPowerTable
+{
+    static constexpr int N = 2048;
+    float dry[N + 1], wet[N + 1];
+    EqualPowerTable()
+    {
+        for (int i = 0; i <= N; ++i)
+        {
+            const float a = ((float) i / (float) N) * 0.5f * kPiF;
+            dry[i] = std::cos (a);
+            wet[i] = std::sin (a);
+        }
+    }
+};
+const EqualPowerTable eqTable;
+
+inline void equalPowerLUT (float t, float& dg, float& wg) noexcept
+{
+    const int idx = (int) (clampf (t, 0.0f, 1.0f) * (float) EqualPowerTable::N);
+    dg = eqTable.dry[idx];
+    wg = eqTable.wet[idx];
+}
+} // namespace
+
 ModulePtr createModule (ModuleID id)
 {
     switch (id)
@@ -156,7 +184,7 @@ void ChaosEngine::process (float* const* buffers, int numChannels, int numSample
         for (int n = 0; n < numSamples; ++n)
         {
             const float mix = mixSmooth[(size_t) mi].next();
-            float dg, wg; equalPower (mix, dg, wg);
+            float dg, wg; equalPowerLUT (mix, dg, wg);
             for (int c = 0; c < numChannels; ++c)
             {
                 float* x = buffers[c];
@@ -170,7 +198,7 @@ void ChaosEngine::process (float* const* buffers, int numChannels, int numSample
     for (int n = 0; n < numSamples; ++n)
     {
         const float mm = masterMix.next();
-        float dg, wg; equalPower (mm, dg, wg);
+        float dg, wg; equalPowerLUT (mm, dg, wg);
         const float og = outputGain.next();
         for (int c = 0; c < numChannels; ++c)
         {
